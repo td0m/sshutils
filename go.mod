@@ -1,4 +1,4 @@
-module github.com/td0m/sshspy
+module github.com/td0m/sshutil
 
 go 1.14
 
