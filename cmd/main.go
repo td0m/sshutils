@@ -92,20 +92,31 @@ func attach(args []string) {
 }
 
 func spyOnTTY(pid int) {
-	cmd := exec.Command("strace", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read,write")
-	stdoutPipe, _ := cmd.StderrPipe()
-	//cmd.Stderr = os.Stderr // print errors directly into stderr
+	// -xx specifies hex escapes, these can be decoded with Go's "strconv.Unquote"
+	cmd := exec.Command("strace", "-xx", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read,write")
+	stdoutPipe, _ := cmd.StdoutPipe()
+	// redirect stderr to stdout (2>&1) as we need to read both
+	cmd.Stderr = cmd.Stdout
 	cmd.Start()
 	scanner := bufio.NewScanner(stdoutPipe)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		line := scanner.Text()
+		// only try to parse read and write syscalls
 		if strings.HasPrefix(line, "read") || strings.HasPrefix(line, "write") {
-			parsed, err := parseLine(line)
+			c, err := parseLine(line)
 			if err != nil {
 				panic(line)
 			}
-			fmt.Println(parsed)
+			switch c.Type {
+			case "read":
+				// not sure why, but after trial and error this worked
+				if c.Count == 16384 && c.Fd != 4 {
+					os.Stdout.WriteString(c.Buf)
+					os.Stdout.Sync()
+				}
+			case "write":
+			}
 		}
 	}
 	cmd.Wait()
@@ -117,10 +128,11 @@ type ReadWriteCmd struct {
 	Fd    int
 	Buf   string
 	Count int
+	Out   int
 }
 
 func parseLine(line string) (ReadWriteCmd, error) {
-	r, _ := regexp.Compile(`(read|write)\(([0-9]+), "((?:[^"\\]|\\.)*)", ([0-9]+)\) += +([0-9]+)`)
+	r, _ := regexp.Compile(`(read|write)\(([0-9]+), "(.*)", ([0-9]+)\) += +([0-9]+)`)
 	matches := r.FindStringSubmatch(line)
 	if len(matches) != 6 {
 		return ReadWriteCmd{}, errors.New("failed parsing read/write command")
@@ -128,12 +140,16 @@ func parseLine(line string) (ReadWriteCmd, error) {
 
 	fd, _ := strconv.Atoi(matches[2])
 	count, _ := strconv.Atoi(matches[4])
+	out, _ := strconv.Atoi(matches[5])
+	buf, _ := strconv.Unquote(`"` + matches[3] + `"`)
+	//fmt.Printf("- %d  %s  %q\n", fd, buf, matches[3])
 
 	return ReadWriteCmd{
 		Type:  matches[1],
 		Fd:    fd,
-		Buf:   matches[3],
+		Buf:   buf,
 		Count: count,
+		Out:   out,
 	}, nil
 }
 
