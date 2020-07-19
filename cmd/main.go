@@ -6,16 +6,20 @@ import (
 	"log"
 	"os"
 	"os/exec"
+
+	//"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/c-bata/go-prompt"
 	"github.com/olekukonko/tablewriter"
 	"github.com/td0m/sshspy/pkg/pts"
-	"github.com/td0m/sshspy/pkg/util"
 )
 
+var ptsSuggestions []prompt.Suggest
+
 func main() {
+	printUserTable()
 	for {
 		cmd := prompt.Input("> ", completer)
 		if cmd == "exit" || cmd == "" {
@@ -28,6 +32,12 @@ func main() {
 			rest = words[1:]
 		}
 		runCommand(words[0], rest)
+	}
+}
+
+func must(err error) {
+	if err != nil {
+		log.Panic(err)
 	}
 }
 
@@ -44,16 +54,21 @@ func runCommand(cmd string, args []string) {
 }
 
 func killPts(args []string) {
-	if !util.IsAdmin() {
-		fmt.Println("root permissions required! Please run this script as sudo")
+	if len(args) != 1 {
+		fmt.Printf("1 argument required, given %d", len(args))
 		return
 	}
-	ptsN, err := getPTSN(args[0])
-	if err != nil {
-		log.Panic(err)
-		return
+	pts, err := pts.New(args[0])
+	must(err)
+	pts.Kill()
+}
+
+func updateCompletions() {
+	ptsSuggestions = []prompt.Suggest{}
+	ptsList := pts.ListAll()
+	for _, pts := range ptsList {
+		ptsSuggestions = append(ptsSuggestions, prompt.Suggest{Text: pts.Terminal[4:]})
 	}
-	pts.Kill(ptsN)
 }
 
 // TODO: check how to complete 2nd arg for "attach"
@@ -77,18 +92,9 @@ func completer(d prompt.Document) []prompt.Suggest {
 	case "kill":
 		fallthrough
 	case "attach":
-		return prompt.FilterHasPrefix(getPTSSuggestions(), d.GetWordBeforeCursor(), false)
+		return prompt.FilterHasPrefix(ptsSuggestions, d.GetWordBeforeCursor(), false)
 	}
 	return []prompt.Suggest{}
-}
-
-func getPTSSuggestions() []prompt.Suggest {
-	ptsList := pts.GetPTSList()
-	suggestions := []prompt.Suggest{}
-	for _, pts := range ptsList {
-		suggestions = append(suggestions, prompt.Suggest{Text: pts.Terminal[4:]})
-	}
-	return suggestions
 }
 
 // TODO: check if device exists
@@ -101,21 +107,15 @@ func getPTSN(s string) (int, error) {
 }
 
 func attach(args []string) {
-	// TODO: display all these prints in a table
-	if !util.IsAdmin() {
-		fmt.Println("root permissions required! Please run this script as sudo")
+	if len(args) != 1 {
+		fmt.Printf("1 argument required, given %d", len(args))
 		return
 	}
-	ptsN, err := getPTSN(args[0])
-	if err != nil {
-		log.Panic(err)
-		return
-	}
-	fmt.Println(ptsN)
+	pts, err := pts.New(args[0])
+	must(err)
 
 	done := make(chan bool, 1)
-
-	go pts.ReadPTS(ptsN)
+	go pts.ReadBuffer(os.Stdout)
 	go func() {
 		exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 		// don't display entered characters on the screen
@@ -124,7 +124,7 @@ func attach(args []string) {
 		var b []byte = make([]byte, 1)
 		for {
 			os.Stdin.Read(b)
-			pts.Write(ptsN, b)
+			pts.Write(b)
 		}
 	}()
 
@@ -132,11 +132,13 @@ func attach(args []string) {
 }
 
 func printUserTable() {
+	updateCompletions()
+
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Terminal", "User", "Started"})
 	table.SetColumnColor(tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor}, tablewriter.Colors{}, tablewriter.Colors{})
 
-	pts := pts.GetPTSList()
+	pts := pts.ListAll()
 	for _, u := range pts {
 		table.Append([]string{"/dev/" + u.Terminal, u.User, "todo time"})
 	}
