@@ -1,4 +1,4 @@
-# SSH Util
+# SSH Utils
 
 ## Features
  - **ls** - list active sessions
@@ -12,16 +12,16 @@
 ### From source
 
 ```bash
-git clone https://github.com/td0m/sshutil/
-cd sshutil
+git clone https://github.com/td0m/sshutils/
+cd sshutils
 sudo go run cmd/main.go
 ```
 <!--
 ### AUR
 
 ```bash
-yay -S sshutil
-sudo sshutil
+yay -S sshutils
+sudo sshutils
 ```
  
 -->
