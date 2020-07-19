@@ -1,205 +1,18 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/c-bata/go-prompt"
 	"github.com/olekukonko/tablewriter"
-	"github.com/shirou/gopsutil/host"
+	"github.com/td0m/sshspy/pkg/pts"
 	"github.com/td0m/sshspy/pkg/util"
 )
-
-// TODO: check how to complete 2nd arg for "attach"
-func completer(d prompt.Document) []prompt.Suggest {
-	commands := []prompt.Suggest{
-		{Text: "help", Description: ""},
-		{Text: "ls", Description: "List sessions"},
-		// TODO: implement, use kill -9 PID, make sure we have root access
-		{Text: "kill", Description: "Kill a session"},
-		{Text: "attach", Description: "Attach a session"},
-		// TODO: Implement, notify on both CONNECT and DISCONNECT
-		{Text: "watch", Description: "Start goroutine that looks for new ssh sessions to be attached and notifies you in real time."},
-		{Text: "exit", Description: "Exit interactive prompt"},
-	}
-	words := strings.Split(d.TextBeforeCursor(), " ")
-	command := words[0]
-	if len(words) == 1 {
-		return prompt.FilterHasPrefix(commands, d.GetWordBeforeCursor(), false)
-	}
-	switch command {
-	case "attach":
-		return prompt.FilterHasPrefix(getPtySuggest(), d.GetWordBeforeCursor(), false)
-	}
-	return []prompt.Suggest{}
-}
-
-func getPtySuggest() []prompt.Suggest {
-	pts := getPts()
-	suggestions := []prompt.Suggest{}
-	for _, p := range pts {
-		suggestions = append(suggestions, prompt.Suggest{Text: p.Terminal[4:]})
-	}
-	return suggestions
-}
-
-func runCommand(cmd string, args []string) {
-	switch cmd {
-	case "help":
-	case "ls":
-		printUserTable()
-	case "attach":
-		attach(args)
-	}
-}
-
-// TODO: implement for numerical input
-// TODO: check if device exists
-func getTTYN(s string) (int, error) {
-	n, err := strconv.Atoi(s)
-	if err == nil {
-		return n, nil
-	}
-	return -1, errors.New("Failed to parse TTY")
-}
-
-// uses `ps -ef` and regex to extract the PID of pts/X process
-func getTTYPID(ttyN int) (int, error) {
-	r, _ := regexp.Compile("^[^ ]+ +([0-9]+)")
-	ttyStr := fmt.Sprintf("pts/%d", ttyN)
-
-	cmd := exec.Command("ps", "-ef")
-	stdoutPipe, _ := cmd.StdoutPipe()
-	cmd.Start()
-	scanner := bufio.NewScanner(stdoutPipe)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "sshd:") && strings.Contains(line, ttyStr) {
-			pidStr := r.FindStringSubmatch(line)[1]
-			pid, _ := strconv.Atoi(pidStr)
-			return pid, nil
-		}
-	}
-	cmd.Wait()
-	return -1, errors.New("proc not found")
-}
-
-func attach(args []string) {
-	// TODO: display all these prints in a table
-	if !util.IsAdmin() {
-		fmt.Println("root permissions required! Please run this script as sudo")
-		return
-	}
-	ttyN, err := getTTYN(args[0])
-	if err != nil {
-		log.Panic(err)
-		return
-	}
-	fmt.Printf("Attempting to connect to: /dev/pts/%d\n", ttyN)
-	pid, err := getTTYPID(ttyN)
-	if err != nil {
-		log.Panic(err)
-	}
-	fmt.Printf("PID: %d\n", pid)
-	spyOnTTY(pid)
-}
-
-// TODO: add ability to specify write buffer instead of stdout, allowing us to e.g. log to a file
-func spyOnTTY(pid int) {
-	// -xx specifies hex escapes, these can be decoded with Go's "strconv.Unquote"
-	cmd := exec.Command("strace", "-xx", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read")
-	stdoutPipe, _ := cmd.StdoutPipe()
-	// redirect stderr to stdout (2>&1) as we need to read both
-	cmd.Stderr = cmd.Stdout
-	cmd.Start()
-	scanner := bufio.NewScanner(stdoutPipe)
-	scanner.Split(bufio.ScanLines)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// only try to parse read and write syscalls
-		if strings.HasPrefix(line, "read") || strings.HasPrefix(line, "write") {
-			c, err := parseLine(line)
-			if err != nil {
-				panic(line)
-			}
-			// not sure why, but after trial and error this worked
-			if c.Count == 16384 && c.Fd != 4 {
-				os.Stdout.WriteString(c.Buf)
-				os.Stdout.Sync()
-			}
-		}
-	}
-	cmd.Wait()
-	fmt.Println("closed")
-}
-
-type ReadCmd struct {
-	Fd    int
-	Buf   string
-	Count int
-	Out   int
-}
-
-func parseLine(line string) (ReadCmd, error) {
-	r, _ := regexp.Compile(`(read)\(([0-9]+), "(.*)", ([0-9]+)\) += +([0-9]+)`)
-	matches := r.FindStringSubmatch(line)
-	if len(matches) != 6 {
-		return ReadCmd{}, errors.New("failed parsing read/write command")
-	}
-
-	fd, _ := strconv.Atoi(matches[2])
-	count, _ := strconv.Atoi(matches[4])
-	out, _ := strconv.Atoi(matches[5])
-	buf, _ := strconv.Unquote(`"` + matches[3] + `"`)
-	//fmt.Printf("- %d  %s  %q\n", fd, buf, matches[3])
-
-	return ReadCmd{
-		Fd:    fd,
-		Buf:   buf,
-		Count: count,
-		Out:   out,
-	}, nil
-}
-
-func getPts() []host.UserStat {
-	users, _ := host.Users()
-	selfTTY, _ := util.TTY()
-
-	filtered := []host.UserStat{}
-	for _, u := range users {
-		// make sure it's a remote ssh terminal session AND isn't the current tty client
-		if u.Terminal[:3] == "pts" && "/dev/"+u.Terminal != selfTTY {
-			filtered = append(filtered, u)
-		}
-	}
-
-	return filtered
-}
-
-func printUserTable() {
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Terminal", "User", "Started"})
-	table.SetColumnColor(tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor}, tablewriter.Colors{}, tablewriter.Colors{})
-
-	pts := getPts()
-	for _, u := range pts {
-		table.Append([]string{"/dev/" + u.Terminal, u.User, "todo time"})
-	}
-
-	if table.NumLines() > 0 {
-		table.Render()
-	} else {
-		fmt.Println("no TTYs processes found")
-	}
-}
 
 func main() {
 	for {
@@ -214,5 +27,90 @@ func main() {
 			rest = words[1:]
 		}
 		runCommand(words[0], rest)
+	}
+}
+
+func runCommand(cmd string, args []string) {
+	switch cmd {
+	case "help":
+	case "ls":
+		printUserTable()
+	case "attach":
+		attach(args)
+	}
+}
+
+// TODO: check how to complete 2nd arg for "attach"
+func completer(d prompt.Document) []prompt.Suggest {
+	commands := []prompt.Suggest{
+		{Text: "help", Description: ""},
+		{Text: "ls", Description: "List PTS sessions"},
+		// TODO: implement, use kill -9 PID, make sure we have root access
+		{Text: "kill", Description: "Kill a PTS"},
+		{Text: "attach", Description: "Attach a PTS"},
+		// TODO: Implement, notify on both CONNECT and DISCONNECT
+		{Text: "watch", Description: "Start goroutine that looks for new ssh sessions to be attached and notifies you in real time."},
+		{Text: "exit", Description: "Exit interactive prompt"},
+	}
+	words := strings.Split(d.TextBeforeCursor(), " ")
+	command := words[0]
+	if len(words) == 1 {
+		return prompt.FilterHasPrefix(commands, d.GetWordBeforeCursor(), false)
+	}
+	switch command {
+	case "kill":
+		fallthrough
+	case "attach":
+		return prompt.FilterHasPrefix(getPTSSuggestions(), d.GetWordBeforeCursor(), false)
+	}
+	return []prompt.Suggest{}
+}
+
+func getPTSSuggestions() []prompt.Suggest {
+	ptsList := pts.GetPTSList()
+	suggestions := []prompt.Suggest{}
+	for _, pts := range ptsList {
+		suggestions = append(suggestions, prompt.Suggest{Text: pts.Terminal[4:]})
+	}
+	return suggestions
+}
+
+// TODO: check if device exists
+func getPTSN(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err == nil {
+		return n, nil
+	}
+	return -1, errors.New("Failed to parse TTY")
+}
+
+func attach(args []string) {
+	// TODO: display all these prints in a table
+	if !util.IsAdmin() {
+		fmt.Println("root permissions required! Please run this script as sudo")
+		return
+	}
+	ptsN, err := getPTSN(args[0])
+	if err != nil {
+		log.Panic(err)
+		return
+	}
+	pts.ReadPTS(ptsN)
+}
+
+func printUserTable() {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Terminal", "User", "Started"})
+	table.SetColumnColor(tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor}, tablewriter.Colors{}, tablewriter.Colors{})
+
+	pts := pts.GetPTSList()
+	for _, u := range pts {
+		table.Append([]string{"/dev/" + u.Terminal, u.User, "todo time"})
+	}
+
+	if table.NumLines() > 0 {
+		table.Render()
+	} else {
+		fmt.Println("no TTYs processes found")
 	}
 }
