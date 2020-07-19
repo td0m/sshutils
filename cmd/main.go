@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -110,7 +111,24 @@ func attach(args []string) {
 		log.Panic(err)
 		return
 	}
-	pts.ReadPTS(ptsN)
+	fmt.Println(ptsN)
+
+	done := make(chan bool, 1)
+
+	go pts.ReadPTS(ptsN)
+	go func() {
+		exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+		// don't display entered characters on the screen
+		exec.Command("stty", "-F", "/dev/tty", "-echo").Run()
+
+		var b []byte = make([]byte, 1)
+		for {
+			os.Stdin.Read(b)
+			pts.Write(ptsN, b)
+		}
+	}()
+
+	<-done
 }
 
 func printUserTable() {
