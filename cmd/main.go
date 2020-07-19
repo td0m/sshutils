@@ -22,6 +22,8 @@ func completer(d prompt.Document) []prompt.Suggest {
 	s := []prompt.Suggest{
 		{Text: "help", Description: ""},
 		{Text: "ls", Description: "List sessions"},
+		// TODO: implement, use kill -9 PID, make sure we have root access
+		{Text: "kill", Description: "Kill a session"},
 		{Text: "attach", Description: "Attach a session"},
 		// TODO: Implement, notify on both CONNECT and DISCONNECT
 		{Text: "watch", Description: "Start goroutine that looks for new ssh sessions to be attached and notifies you in real time."},
@@ -73,6 +75,7 @@ func getTTYPID(ttyN int) (int, error) {
 }
 
 func attach(args []string) {
+	// TODO: display all these prints in a table
 	if !util.IsAdmin() {
 		fmt.Println("root permissions required! Please run this script as sudo")
 		return
@@ -93,7 +96,7 @@ func attach(args []string) {
 
 func spyOnTTY(pid int) {
 	// -xx specifies hex escapes, these can be decoded with Go's "strconv.Unquote"
-	cmd := exec.Command("strace", "-xx", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read,write")
+	cmd := exec.Command("strace", "-xx", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read")
 	stdoutPipe, _ := cmd.StdoutPipe()
 	// redirect stderr to stdout (2>&1) as we need to read both
 	cmd.Stderr = cmd.Stdout
@@ -108,14 +111,10 @@ func spyOnTTY(pid int) {
 			if err != nil {
 				panic(line)
 			}
-			switch c.Type {
-			case "read":
-				// not sure why, but after trial and error this worked
-				if c.Count == 16384 && c.Fd != 4 {
-					os.Stdout.WriteString(c.Buf)
-					os.Stdout.Sync()
-				}
-			case "write":
+			// not sure why, but after trial and error this worked
+			if c.Count == 16384 && c.Fd != 4 {
+				os.Stdout.WriteString(c.Buf)
+				os.Stdout.Sync()
 			}
 		}
 	}
@@ -123,19 +122,18 @@ func spyOnTTY(pid int) {
 	fmt.Println("closed")
 }
 
-type ReadWriteCmd struct {
-	Type  string
+type ReadCmd struct {
 	Fd    int
 	Buf   string
 	Count int
 	Out   int
 }
 
-func parseLine(line string) (ReadWriteCmd, error) {
-	r, _ := regexp.Compile(`(read|write)\(([0-9]+), "(.*)", ([0-9]+)\) += +([0-9]+)`)
+func parseLine(line string) (ReadCmd, error) {
+	r, _ := regexp.Compile(`(read)\(([0-9]+), "(.*)", ([0-9]+)\) += +([0-9]+)`)
 	matches := r.FindStringSubmatch(line)
 	if len(matches) != 6 {
-		return ReadWriteCmd{}, errors.New("failed parsing read/write command")
+		return ReadCmd{}, errors.New("failed parsing read/write command")
 	}
 
 	fd, _ := strconv.Atoi(matches[2])
@@ -144,8 +142,7 @@ func parseLine(line string) (ReadWriteCmd, error) {
 	buf, _ := strconv.Unquote(`"` + matches[3] + `"`)
 	//fmt.Printf("- %d  %s  %q\n", fd, buf, matches[3])
 
-	return ReadWriteCmd{
-		Type:  matches[1],
+	return ReadCmd{
 		Fd:    fd,
 		Buf:   buf,
 		Count: count,
