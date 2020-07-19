@@ -19,7 +19,7 @@ import (
 
 // TODO: check how to complete 2nd arg for "attach"
 func completer(d prompt.Document) []prompt.Suggest {
-	s := []prompt.Suggest{
+	commands := []prompt.Suggest{
 		{Text: "help", Description: ""},
 		{Text: "ls", Description: "List sessions"},
 		// TODO: implement, use kill -9 PID, make sure we have root access
@@ -29,7 +29,25 @@ func completer(d prompt.Document) []prompt.Suggest {
 		{Text: "watch", Description: "Start goroutine that looks for new ssh sessions to be attached and notifies you in real time."},
 		{Text: "exit", Description: "Exit interactive prompt"},
 	}
-	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
+	words := strings.Split(d.TextBeforeCursor(), " ")
+	command := words[0]
+	if len(words) == 1 {
+		return prompt.FilterHasPrefix(commands, d.GetWordBeforeCursor(), false)
+	}
+	switch command {
+	case "attach":
+		return prompt.FilterHasPrefix(getPtySuggest(), d.GetWordBeforeCursor(), false)
+	}
+	return []prompt.Suggest{}
+}
+
+func getPtySuggest() []prompt.Suggest {
+	pts := getPts()
+	suggestions := []prompt.Suggest{}
+	for _, p := range pts {
+		suggestions = append(suggestions, prompt.Suggest{Text: p.Terminal[4:]})
+	}
+	return suggestions
 }
 
 func runCommand(cmd string, args []string) {
@@ -94,6 +112,7 @@ func attach(args []string) {
 	spyOnTTY(pid)
 }
 
+// TODO: add ability to specify write buffer instead of stdout, allowing us to e.g. log to a file
 func spyOnTTY(pid int) {
 	// -xx specifies hex escapes, these can be decoded with Go's "strconv.Unquote"
 	cmd := exec.Command("strace", "-xx", "-s", "16384", "-p", strconv.Itoa(pid), "-e", "read")
@@ -150,18 +169,29 @@ func parseLine(line string) (ReadCmd, error) {
 	}, nil
 }
 
+func getPts() []host.UserStat {
+	users, _ := host.Users()
+	selfTTY, _ := util.TTY()
+
+	filtered := []host.UserStat{}
+	for _, u := range users {
+		// make sure it's a remote ssh terminal session AND isn't the current tty client
+		if u.Terminal[:3] == "pts" && "/dev/"+u.Terminal != selfTTY {
+			filtered = append(filtered, u)
+		}
+	}
+
+	return filtered
+}
+
 func printUserTable() {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Terminal", "User", "Started"})
 	table.SetColumnColor(tablewriter.Colors{tablewriter.Bold, tablewriter.FgCyanColor}, tablewriter.Colors{}, tablewriter.Colors{})
 
-	users, _ := host.Users()
-	selfTTY, _ := util.TTY()
-	for _, u := range users {
-		// make sure it's a remote ssh terminal session AND isn't the current tty client
-		if u.Terminal[:3] == "pts" && "/dev/"+u.Terminal != selfTTY {
-			table.Append([]string{"/dev/" + u.Terminal, u.User, "todo time"})
-		}
+	pts := getPts()
+	for _, u := range pts {
+		table.Append([]string{"/dev/" + u.Terminal, u.User, "todo time"})
 	}
 
 	if table.NumLines() > 0 {
@@ -173,7 +203,6 @@ func printUserTable() {
 
 func main() {
 	for {
-
 		cmd := prompt.Input("> ", completer)
 		if cmd == "exit" || cmd == "" {
 			os.Exit(0)
