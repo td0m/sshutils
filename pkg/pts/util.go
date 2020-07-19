@@ -2,7 +2,6 @@ package pts
 
 import (
 	"bufio"
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -46,8 +45,4 @@ func parseLine(line string) (ReadCmd, error) {
 	out, _ := strconv.Atoi(matches[5])
 
 	return ReadCmd{fd, buf, count, out}, nil
-}
-
-func isAdmin() bool {
-	return os.Geteuid() == 0
 }

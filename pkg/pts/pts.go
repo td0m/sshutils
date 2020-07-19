@@ -79,6 +79,9 @@ func (pts *PTS) ReadBuffer(f *os.File) error {
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.HasPrefix(line, "strace:") && strings.Contains(line, "Operation not permitted") {
+			return errors.New("Operation not permitted. Please run as sudo or add yourself to owning group")
+		}
 		// only try to parse read and write syscalls
 		if strings.HasPrefix(line, "read") || strings.HasPrefix(line, "write") {
 			c, err := parseLine(line)

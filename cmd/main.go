@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 
-	//"os/exec"
 	"strconv"
 	"strings"
 
@@ -35,12 +34,6 @@ func main() {
 	}
 }
 
-func must(err error) {
-	if err != nil {
-		log.Panic(err)
-	}
-}
-
 func runCommand(cmd string, args []string) {
 	switch cmd {
 	case "help":
@@ -59,7 +52,10 @@ func killPts(args []string) {
 		return
 	}
 	pts, err := pts.New(args[0])
-	must(err)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	pts.Kill()
 }
 
@@ -112,10 +108,16 @@ func attach(args []string) {
 		return
 	}
 	pts, err := pts.New(args[0])
-	must(err)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	done := make(chan bool, 1)
-	go pts.ReadBuffer(os.Stdout)
+	go func() {
+		log.Panic(pts.ReadBuffer(os.Stdout))
+	}()
+
 	go func() {
 		exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
 		// don't display entered characters on the screen
