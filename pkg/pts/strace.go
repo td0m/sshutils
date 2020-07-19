@@ -60,6 +60,12 @@ func ReadPTS(id int) {
 	fmt.Println("closed")
 }
 
+func Kill(pts int) {
+	pid, _ := getPID(pts)
+	exec.Command("kill", "-9", strconv.Itoa(pid)).Output()
+	fmt.Println(strconv.Itoa(pid))
+}
+
 // uses `ps -ef` and regex to extract the PID of /dev/pts/X process
 func getPID(ptsN int) (int, error) {
 	r, _ := regexp.Compile("^[^ ]+ +([0-9]+)")

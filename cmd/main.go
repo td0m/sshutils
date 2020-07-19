@@ -33,11 +33,26 @@ func main() {
 func runCommand(cmd string, args []string) {
 	switch cmd {
 	case "help":
+	case "kill":
+		killPts(args)
 	case "ls":
 		printUserTable()
 	case "attach":
 		attach(args)
 	}
+}
+
+func killPts(args []string) {
+	if !util.IsAdmin() {
+		fmt.Println("root permissions required! Please run this script as sudo")
+		return
+	}
+	ptsN, err := getPTSN(args[0])
+	if err != nil {
+		log.Panic(err)
+		return
+	}
+	pts.Kill(ptsN)
 }
 
 // TODO: check how to complete 2nd arg for "attach"
