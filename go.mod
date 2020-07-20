@@ -9,6 +9,6 @@ require (
 	github.com/mattn/go-tty v0.0.3 // indirect
 	github.com/olekukonko/tablewriter v0.0.4 // indirect
 	github.com/pkg/term v0.0.0-20200520122047-c3ffed290a03 // indirect
-	github.com/td0m/sshutil v0.0.0-20200719230438-89249edd61c6 // indirect
+	github.com/shirou/gopsutil v2.20.6+incompatible
 	golang.org/x/sys v0.0.0-20200625212154-ddb9806d33ae // indirect
 )

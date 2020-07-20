@@ -12,7 +12,7 @@ import (
 
 	"github.com/c-bata/go-prompt"
 	"github.com/olekukonko/tablewriter"
-	"github.com/td0m/sshutil/pkg/pts"
+	"github.com/td0m/sshutils/pkg/pts"
 )
 
 var ptsSuggestions []prompt.Suggest
