@@ -12,10 +12,11 @@
 ### From source
 
 ```bash
-git clone https://github.com/td0m/sshutils/
-cd sshutils
-sudo go run cmd/main.go
+GO111MODULE=auto go get github.com/td0m/sshutils
+sudo sshutils
 ```
+
+Please make sure `$GOPATH` is set and `$GOPATH/bin` is in your `$PATH`.
 
 ### AUR
 
